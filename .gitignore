@@ -1,0 +1,27 @@
+# Create the .gitignore file
+echo "# Dependencies" > .gitignore
+echo "node_modules/" >> .gitignore
+echo "" >> .gitignore
+echo "# Environment variables" >> .gitignore
+echo ".env" >> .gitignore
+echo ".env.local" >> .gitignore
+echo ".env.production" >> .gitignore
+echo "" >> .gitignore
+echo "# Build outputs" >> .gitignore
+echo "dist/" >> .gitignore
+echo "build/" >> .gitignore
+echo "" >> .gitignore
+echo "# Docker" >> .gitignore
+echo "*.log" >> .gitignore
+echo "" >> .gitignore
+echo "# OS files" >> .gitignore
+echo ".DS_Store" >> .gitignore
+echo "Thumbs.db" >> .gitignore
+echo "" >> .gitignore
+echo "# IDE" >> .gitignore
+echo ".vscode/" >> .gitignore
+echo ".idea/" >> .gitignore
+echo "" >> .gitignore
+echo "# Temporary files" >> .gitignore
+echo "*.tmp" >> .gitignore
+echo "*.swp" >> .gitignore

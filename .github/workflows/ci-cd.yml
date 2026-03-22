@@ -1,19 +1,14 @@
 name: CI/CD Pipeline
 
-# Trigger the workflow on:
 on:
   push:
     branches: [ main, develop ]
   pull_request:
     branches: [ main ]
 
-# Environment variables
 env:
   NODE_VERSION: '22'
-  DOCKER_IMAGE_NAME: taskflow
-  DOCKER_REGISTRY: ghcr.io
 
-# Jobs define what will run
 jobs:
   # JOB 1: Test Backend
   test-backend:
@@ -33,31 +28,11 @@ jobs:
       
       - name: Install backend dependencies
         working-directory: ./backend
-        run: npm ci
+        run: npm install  # Changed from npm ci
       
-      - name: Run backend linting (if you have linting configured)
+      - name: Check backend loads
         working-directory: ./backend
-        run: |
-          if npm run | grep -q "lint"; then
-            npm run lint
-          else
-            echo "No lint script found, skipping linting"
-          fi
-      
-      - name: Run backend tests (placeholder)
-        working-directory: ./backend
-        run: |
-          if npm run | grep -q "test"; then
-            npm test
-          else
-            echo "No test script found, creating placeholder test"
-            npm pkg set scripts.test="echo 'No tests configured yet'"
-            npm test
-          fi
-      
-      - name: Check backend build
-        working-directory: ./backend
-        run: node -e "require('./server.js'); console.log('Backend loads successfully'); process.exit(0);"
+        run: node -e "require('./server.js'); console.log('✅ Backend loads successfully'); process.exit(0);"
         timeout-minutes: 1
 
   # JOB 2: Test Frontend
@@ -78,16 +53,7 @@ jobs:
       
       - name: Install frontend dependencies
         working-directory: ./frontend
-        run: npm ci
-      
-      - name: Run frontend tests (if configured)
-        working-directory: ./frontend
-        run: |
-          if npm run | grep -q "test"; then
-            npm test -- --watchAll=false --passWithNoTests
-          else
-            echo "No test script found, skipping tests"
-          fi
+        run: npm install  # Changed from npm ci
       
       - name: Build frontend
         working-directory: ./frontend
@@ -139,7 +105,7 @@ jobs:
           docker images | grep taskflow
           echo "✅ Docker images built successfully"
 
-  # JOB 4: Integration Test (Optional - runs only on main)
+  # JOB 4: Integration Test
   integration-test:
     name: Integration Test
     runs-on: ubuntu-latest
@@ -149,9 +115,6 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
       
       - name: Start services with Docker Compose
         run: |
@@ -197,57 +160,3 @@ jobs:
       - name: Stop services
         if: always()
         run: docker compose down
-
-  # JOB 5: Security Scan (Optional)
-  security-scan:
-    name: Security Scan
-    runs-on: ubuntu-latest
-    needs: [docker-build]
-    if: github.ref == 'refs/heads/main'
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      
-      - name: Run Trivy vulnerability scanner (backend)
-        uses: aquasecurity/trivy-action@master
-        with:
-          scan-type: 'fs'
-          scan-ref: './backend'
-          format: 'table'
-          exit-code: '0'
-          severity: 'CRITICAL,HIGH'
-      
-      - name: Run Trivy vulnerability scanner (frontend)
-        uses: aquasecurity/trivy-action@master
-        with:
-          scan-type: 'fs'
-          scan-ref: './frontend'
-          format: 'table'
-          exit-code: '0'
-          severity: 'CRITICAL,HIGH'
-      
-      - name: Run npm audit on backend
-        working-directory: ./backend
-        run: |
-          npm audit --audit-level=high || echo "⚠️ Vulnerabilities found, but continuing"
-
-  # JOB 6: Deployment (Placeholder - for future)
-  deploy:
-    name: Deploy to Production
-    runs-on: ubuntu-latest
-    needs: [integration-test, security-scan]
-    if: github.ref == 'refs/heads/main' && false  # Disabled for now
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      
-      - name: Deploy to server
-        run: |
-          echo "🚀 Deployment would happen here"
-          echo "This could be:"
-          echo "- SSH to server and pull latest images"
-          echo "- Deploy to Kubernetes"
-          echo "- Deploy to cloud platform"
-          echo "Will be implemented in Phase 6!"

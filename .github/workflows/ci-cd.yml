@@ -1,0 +1,253 @@
+name: CI/CD Pipeline
+
+# Trigger the workflow on:
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+# Environment variables
+env:
+  NODE_VERSION: '22'
+  DOCKER_IMAGE_NAME: taskflow
+  DOCKER_REGISTRY: ghcr.io
+
+# Jobs define what will run
+jobs:
+  # JOB 1: Test Backend
+  test-backend:
+    name: Test Backend
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+      
+      - name: Install backend dependencies
+        working-directory: ./backend
+        run: npm ci
+      
+      - name: Run backend linting (if you have linting configured)
+        working-directory: ./backend
+        run: |
+          if npm run | grep -q "lint"; then
+            npm run lint
+          else
+            echo "No lint script found, skipping linting"
+          fi
+      
+      - name: Run backend tests (placeholder)
+        working-directory: ./backend
+        run: |
+          if npm run | grep -q "test"; then
+            npm test
+          else
+            echo "No test script found, creating placeholder test"
+            npm pkg set scripts.test="echo 'No tests configured yet'"
+            npm test
+          fi
+      
+      - name: Check backend build
+        working-directory: ./backend
+        run: node -e "require('./server.js'); console.log('Backend loads successfully'); process.exit(0);"
+        timeout-minutes: 1
+
+  # JOB 2: Test Frontend
+  test-frontend:
+    name: Test Frontend
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+      
+      - name: Install frontend dependencies
+        working-directory: ./frontend
+        run: npm ci
+      
+      - name: Run frontend tests (if configured)
+        working-directory: ./frontend
+        run: |
+          if npm run | grep -q "test"; then
+            npm test -- --watchAll=false --passWithNoTests
+          else
+            echo "No test script found, skipping tests"
+          fi
+      
+      - name: Build frontend
+        working-directory: ./frontend
+        run: npm run build
+      
+      - name: Verify build output
+        working-directory: ./frontend
+        run: |
+          if [ -d "build" ] && [ -f "build/index.html" ]; then
+            echo "✅ Frontend build successful"
+          else
+            echo "❌ Frontend build failed"
+            exit 1
+          fi
+
+  # JOB 3: Docker Build Validation
+  docker-build:
+    name: Validate Docker Build
+    runs-on: ubuntu-latest
+    needs: [test-backend, test-frontend]
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Build backend image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          load: true
+          tags: taskflow-backend:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      
+      - name: Build frontend image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          load: true
+          tags: taskflow-frontend:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      
+      - name: Verify images were built
+        run: |
+          docker images | grep taskflow
+          echo "✅ Docker images built successfully"
+
+  # JOB 4: Integration Test (Optional - runs only on main)
+  integration-test:
+    name: Integration Test
+    runs-on: ubuntu-latest
+    needs: [docker-build]
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Start services with Docker Compose
+        run: |
+          docker compose up -d --build
+      
+      - name: Wait for services to be ready
+        run: |
+          echo "Waiting for MySQL to be ready..."
+          timeout 60s bash -c 'until docker exec taskflow-mysql mysqladmin ping -h localhost -uroot -prootpassword 2>/dev/null; do sleep 2; done'
+          echo "Waiting for Backend to be ready..."
+          timeout 60s bash -c 'until curl -s http://localhost:5011/api/health | grep -q "running"; do sleep 2; done'
+          echo "✅ All services are ready"
+      
+      - name: Test API endpoints
+        run: |
+          echo "Testing health endpoint..."
+          curl -f http://localhost:5011/api/health || exit 1
+          
+          echo "Testing tasks endpoint..."
+          curl -f http://localhost:5011/api/tasks || exit 1
+          
+          echo "Testing task creation..."
+          curl -X POST -H "Content-Type: application/json" \
+            -d '{"title":"Test Task","description":"Created by CI"}' \
+            http://localhost:5011/api/tasks || exit 1
+          
+          echo "✅ All API tests passed"
+      
+      - name: Test frontend
+        run: |
+          echo "Testing frontend..."
+          curl -f http://localhost:8080 || exit 1
+          echo "✅ Frontend is accessible"
+      
+      - name: Show logs (if test fails)
+        if: failure()
+        run: |
+          echo "=== Backend Logs ==="
+          docker logs taskflow-backend --tail 50
+          echo "=== MySQL Logs ==="
+          docker logs taskflow-mysql --tail 50
+      
+      - name: Stop services
+        if: always()
+        run: docker compose down
+
+  # JOB 5: Security Scan (Optional)
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    needs: [docker-build]
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Run Trivy vulnerability scanner (backend)
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: './backend'
+          format: 'table'
+          exit-code: '0'
+          severity: 'CRITICAL,HIGH'
+      
+      - name: Run Trivy vulnerability scanner (frontend)
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: './frontend'
+          format: 'table'
+          exit-code: '0'
+          severity: 'CRITICAL,HIGH'
+      
+      - name: Run npm audit on backend
+        working-directory: ./backend
+        run: |
+          npm audit --audit-level=high || echo "⚠️ Vulnerabilities found, but continuing"
+
+  # JOB 6: Deployment (Placeholder - for future)
+  deploy:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [integration-test, security-scan]
+    if: github.ref == 'refs/heads/main' && false  # Disabled for now
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Deploy to server
+        run: |
+          echo "🚀 Deployment would happen here"
+          echo "This could be:"
+          echo "- SSH to server and pull latest images"
+          echo "- Deploy to Kubernetes"
+          echo "- Deploy to cloud platform"
+          echo "Will be implemented in Phase 6!"
